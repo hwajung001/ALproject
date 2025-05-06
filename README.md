@@ -1,6 +1,6 @@
-# ALproject
 
 # CIFAR-100 Fine-to-Coarse Mapping Project
+
 
 ## 🧰 개요
 
@@ -10,6 +10,8 @@
 - **코어스 클래스 (Coarse Class, 상위 클래스, 20개)**
 
 fine 클래스에 대해 학습한 모델만을 사용하여, coarse 수준의 분류를 어떻게 수행할 수 있는지를 다양한 매핑 전략으로 탐색합니다.
+
+
 
 ## 🚀 목표
 - MiniVGGNet 모델을 직접 구현하여 fine class 분류기 학습  
