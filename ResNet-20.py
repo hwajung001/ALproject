@@ -389,13 +389,14 @@ class Trainer:
 # 모델 및 트레이너 초기화
 model = ResNet20()
 trainer = Trainer(
-    model,
-    (x_train, y_train),
-    (x_test, y_test),
-    epochs=20,              # 전체 에폭 수
-    batch_size=32,          # 작은 배치로 메모리 절약
+    model=model,
+    model_name='ResNet-20',
+    train_data=(x_train, y_train),
+    test_data=(x_val, y_val),   
+    epochs=30,
+    batch_size=32,
     optimizer_name='adam',
-    lr=0.0005               # 안정적인 학습을 위한 낮은 학습률
+    lr=0.005
 )
 
 # 학습 시작
@@ -403,6 +404,3 @@ trainer.train()
 
 # 최종 모델 및 로그 저장
 trainer.save_log("final_log.npz")
-trainer.save_model("checkpoint_epoch_20.pkl")
-
-
