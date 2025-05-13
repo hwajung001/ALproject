@@ -780,7 +780,7 @@ def main():
 
     for wd in weight_decays:
         for dr in dropout_ratios:
-            model_name = f"ResNet20_wd{wd}_dropout{dr}"
+            model_name = f"ResNet20_wd{wd}_dropout{dr}_0.01_64"
             print(f"\n[Training {model_name}]", flush=True)
 
             model = ResNet20(dropout_ratio=dr)  
@@ -793,6 +793,44 @@ def main():
                 epochs=20,
                 batch_size=64,
                 optimizer_name='adam',
+                lr=0.01,
+                weight_decay=wd,
+                patience=5
+            )
+
+            trainer.train()
+            trainer.save_log(f"{model_name}_log.npz")
+            trainer.save_model(f"{model_name}_epoch20.pkl")
+
+            trainer.load_best_and_evaluate()
+            trainer.save_confusion_matrix(x_val, y_val_fine, label_names=meta['fine_label_names'],
+                                          save_path=f"{model_name}_confusion.png")
+            trainer.visualize_misclassified(x_val, y_val_fine,
+                                            label_names=meta['fine_label_names'],
+                                            save_path=f"{model_name}_misclassified.png")
+
+            final_acc = trainer.test_acc_list[-1]
+            results.append((wd, dr, final_acc))
+
+    print("\n[하이퍼파라미터 튜닝 결과 요약]")
+    for wd, dr, acc in results:
+        print(f"weight_decay={wd}, dropout={dr} → test_acc={acc:.4f}", flush=True)
+    
+    for wd in weight_decays:
+        for dr in dropout_ratios:
+            model_name = f"ResNet20_wd{wd}_dropout{dr}_0.001_32"
+            print(f"\n[Training {model_name}]", flush=True)
+
+            model = ResNet20(dropout_ratio=dr)  
+            trainer = Trainer(
+                model=model,
+                model_name=model_name,
+                train_data=(x_train, y_train_fine),
+                val_data=(x_val, y_val_fine),
+                test_data=(x_test, y_test_fine),
+                epochs=20,
+                batch_size=32,
+                optimizer_name='adam',
                 lr=0.001,
                 weight_decay=wd,
                 patience=5
@@ -802,7 +840,6 @@ def main():
             trainer.save_log(f"{model_name}_log.npz")
             trainer.save_model(f"{model_name}_epoch20.pkl")
 
-            # 평가 및 confusion matrix + 잘못 예측 시각화
             trainer.load_best_and_evaluate()
             trainer.save_confusion_matrix(x_val, y_val_fine, label_names=meta['fine_label_names'],
                                           save_path=f"{model_name}_confusion.png")
