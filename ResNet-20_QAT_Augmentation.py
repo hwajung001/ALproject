@@ -82,7 +82,7 @@ download_cifar100()
 (x_train, y_train_fine, y_train_coarse), (x_val, y_val_fine, y_val_coarse), (x_test, y_test_fine, y_test_coarse) = load_cifar100()
 meta = load_meta()
 
-# 증강 함수들
+# 증강 함수
 def random_crop(x, crop_size=32, padding=4):
     n, c, h, w = x.shape
     padded = np.pad(x, ((0, 0), (0, 0), (padding, padding), (padding, padding)), mode='reflect')
@@ -675,7 +675,7 @@ class Trainer:
 
             train_acc = self.model.accuracy(self.train_x[:1000], self.train_t[:1000])
             test_acc = self.model.accuracy(self.test_x, self.test_t)
-            val_loss = self.model.loss(self.val_x, self.val_t)
+            val_loss = self.batched_loss(self.val_x, self.val_t, batch_size=128)
             self.train_acc_list.append(train_acc)
             self.test_acc_list.append(test_acc)
             self.val_loss_list.append(val_loss)
@@ -747,6 +747,17 @@ class Trainer:
         self.train_acc_list = state.get('train_acc_list', [])
         self.test_acc_list = state.get('test_acc_list', [])
         self.val_loss_list = state.get('val_loss_list', [])
+
+    def batched_loss(self, x, t, batch_size=128):
+        total_loss = 0.0
+        total_count = 0
+        for i in range(0, len(x), batch_size):
+            x_batch = x[i:i+batch_size]
+            t_batch = t[i:i+batch_size]
+            loss = self.model.loss(x_batch, t_batch)
+            total_loss += loss * len(x_batch)
+            total_count += len(x_batch)
+        return total_loss / total_count
 
 def main_augmented_comparison():
     augmentations = ["random_crop", "horizontal_flip", "cutout", "color_jitter"]
