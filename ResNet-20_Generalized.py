@@ -789,6 +789,7 @@ def run_experiments():
             trainer.warmup_epochs = 5
             trainer.train()
             trainer.save_log(f"log_cfg{model_id+1}_skip{skip}.npz")
+            trainer.save_model(f"model_cfg{model_id+1}_skip{skip}.pkl")
 
         # Best skip_prob = 0.1 고정 (예시), smoothing 튜닝
         for smooth in smoothing_values:
@@ -810,6 +811,8 @@ def run_experiments():
             trainer.warmup_epochs = 5
             trainer.train()
             trainer.save_log(f"log_cfg{model_id+1}_smooth{smooth}.npz")
+            trainer.save_model(f"model_cfg{model_id+1}_smooth{smooth}.pkl")
+            
 
         # EMA/Warmup 튜닝
         for ema_cfg in ema_warmup_configs:
@@ -831,6 +834,7 @@ def run_experiments():
             trainer.warmup_epochs = ema_cfg["warmup_epochs"]
             trainer.train()
             trainer.save_log(f"log_cfg{model_id+1}_ema{ema_cfg['ema_decay']}_warmup{ema_cfg['warmup_epochs']}.npz")
+            trainer.save_model(f"model_cfg{model_id+1}_ema{ema_cfg['ema_decay']}_warmup{ema_cfg['warmup_epochs']}.pkl")
 
 if __name__ == "__main__":
     run_experiments()
