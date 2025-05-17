@@ -770,28 +770,6 @@ ema_warmup_configs = [
 def run_experiments():
     for model_id, cfg in enumerate(model_configs):
         print(f"=== [모델 설정 {model_id+1}] LR={cfg['lr']}, BS={cfg['batch_size']} ===")
-        # 1단계: skip_prob 튜닝
-        for skip in skip_probs:
-            model = ResNet20()
-            trainer = Trainer(
-                model=model,
-                model_name=f"ResNet20_cfg{model_id+1}_skip{skip}",
-                train_data=(x_train, y_train_fine),
-                val_data=(x_val, y_val_fine),
-                test_data=(x_test, y_test_fine),
-                epochs=10,
-                batch_size=cfg["batch_size"],
-                optimizer_name="adam",
-                lr=cfg["lr"]
-            )
-            trainer.skip_prob = skip
-            trainer.smoothing = 0.1
-            trainer.ema_decay = 0.999
-            trainer.warmup_epochs = 5
-            trainer.train()
-            trainer.save_log(f"log_cfg{model_id+1}_skip{skip}.npz")
-            trainer.save_model(f"model_cfg{model_id+1}_skip{skip}.pkl")
-
         # Best skip_prob = 0.1 고정 (예시), smoothing 튜닝
         for smooth in smoothing_values:
             model = ResNet20()
@@ -806,7 +784,7 @@ def run_experiments():
                 optimizer_name="adam",  
                 lr=cfg["lr"]
             )
-            trainer.skip_prob = 0.1
+            trainer.skip_prob = 0.0
             trainer.smoothing = smooth
             trainer.ema_decay = 0.999
             trainer.warmup_epochs = 5
@@ -829,7 +807,7 @@ def run_experiments():
                 optimizer_name="adam",
                 lr=cfg["lr"]
             )
-            trainer.skip_prob = 0.1
+            trainer.skip_prob = 0.0
             trainer.smoothing = 0.1
             trainer.ema_decay = ema_cfg["ema_decay"]
             trainer.warmup_epochs = ema_cfg["warmup_epochs"]
