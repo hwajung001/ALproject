@@ -84,42 +84,6 @@ download_cifar100()
 (x_train, y_train_fine, y_train_coarse), (x_val, y_val_fine, y_val_coarse), (x_test, y_test_fine, y_test_coarse) = load_cifar100()
 meta = load_meta()
 
-# 증강 함수
-def random_crop(x, crop_size=32, padding=4):
-    n, c, h, w = x.shape
-    padded = np.pad(x, ((0, 0), (0, 0), (padding, padding), (padding, padding)), mode='reflect')
-    cropped = np.empty((n, c, crop_size, crop_size), dtype=x.dtype)
-    for i in range(n):
-        top = np.random.randint(0, padding * 2 + 1)
-        left = np.random.randint(0, padding * 2 + 1)
-        cropped[i] = padded[i, :, top:top+crop_size, left:left+crop_size]
-    return cropped
-
-def horizontal_flip(x):
-    return x[:, :, :, ::-1]
-
-def cutout(x, size=16):  
-    x_cut = x.copy()
-    n, c, h, w = x.shape
-    for i in range(n):
-        cy, cx = np.random.randint(h), np.random.randint(w)
-        y1 = np.clip(cy - size // 2, 0, h)
-        y2 = np.clip(cy + size // 2, 0, h)
-        x1 = np.clip(cx - size // 2, 0, w)
-        x2 = np.clip(cx + size // 2, 0, w)
-        x_cut[i, :, y1:y2, x1:x2] = 0
-    return x_cut
-
-def color_jitter(x, brightness=0.3, contrast=0.3):
-    x_jittered = x.copy()
-    for i in range(x.shape[0]):
-        b = 1 + np.random.uniform(-brightness, brightness)
-        c = 1 + np.random.uniform(-contrast, contrast)
-        mean = x_jittered[i].mean(axis=(1, 2), keepdims=True)
-        x_jittered[i] = (x_jittered[i] - mean) * c + mean
-        x_jittered[i] = np.clip(x_jittered[i] * b, 0, 1)
-    return x_jittered
-
 # 증강 적용 함수 (on-the-fly)
 def apply_augmentations(x, crop_size=32, padding=4, cutout_size=16):
     # random crop
@@ -130,10 +94,6 @@ def apply_augmentations(x, crop_size=32, padding=4, cutout_size=16):
         top = np.random.randint(0, padding * 2 + 1)
         left = np.random.randint(0, padding * 2 + 1)
         cropped[i] = padded[i, :, top:top+crop_size, left:left+crop_size]
-
-    # horizontal flip
-    if np.random.rand() < 0.5:
-        cropped = cropped[:, :, :, ::-1]
 
     # cutout
     for i in range(n):
@@ -179,7 +139,6 @@ def fake_quantize(x, num_bits=8):
     q_x = np.clip(np.round(q_x), qmin, qmax)
     fq_x = scale * (q_x - zero_point)
     return fq_x
-
 
 # 모델 레이어 및 ResNet-20 정의
 from common.layers import Convolution, Affine, Relu, BatchNormalization
@@ -530,40 +489,13 @@ def print_resnet20_summary(model, input_shape=(1, 3, 32, 32)):
 model = ResNet20()
 print_resnet20_summary(model, input_shape=(1, 3, 32, 32))
 
-# 모델 복제 및 EMA 업데이트 함수
-import math
-
-def clone_model(model):
-    return copy.deepcopy(model)
-
-def update_ema_model(ema_model, model, decay=0.999):
-    for ema_layer, model_layer in zip(ema_model.layer1 + ema_model.layer2 + ema_model.layer3,
-                                      model.layer1 + model.layer2 + model.layer3):
-        for attr in ['conv1', 'conv2', 'shortcut']:
-            if hasattr(model_layer, attr):
-                model_conv = getattr(model_layer, attr)
-                ema_conv = getattr(ema_layer, attr)
-                ema_conv.W = decay * ema_conv.W + (1 - decay) * model_conv.W
-                ema_conv.b = decay * ema_conv.b + (1 - decay) * model_conv.b
-
-    ema_model.fc.W = decay * ema_model.fc.W + (1 - decay) * model.fc.W
-    ema_model.fc.b = decay * ema_model.fc.b + (1 - decay) * model.fc.b
-
-
-def cosine_annealing_with_warmup(epoch, total_epochs, base_lr, warmup_epochs=5):
-    if epoch < warmup_epochs:
-        return base_lr * (epoch + 1) / warmup_epochs
-    else:
-        progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
-        return 0.5 * base_lr * (1 + math.cos(math.pi * progress))
-    
-
 import time
+import pickle
 from common.optimizer import Adam
 from common.functions import softmax
 
 class Trainer:
-    def __init__(self, model, model_name, train_data, val_data, test_data, epochs=20, batch_size=64, optimizer_name='sgd', lr=0.01):
+    def __init__(self, model, model_name, train_data, val_data, test_data, epochs=20, batch_size=64, optimizer_name='adam', lr=0.01, smoothing=0.1):
         self.model = model
         self.model_name = model_name
         self.train_x, self.train_t = train_data
@@ -571,6 +503,7 @@ class Trainer:
         self.test_x, self.test_t = test_data
         self.epochs = epochs
         self.batch_size = batch_size
+        self.smoothing = smoothing
 
         self.train_size = self.train_x.shape[0]
         self.iter_per_epoch = max(self.train_size // self.batch_size, 1)
@@ -585,7 +518,6 @@ class Trainer:
             self.optimizer = Adam(lr=lr)
         else:
             raise ValueError("Unsupported optimizer")
-        self.ema_model = clone_model(self.model)
 
     def get_param_dict_and_grad(self):
         param_dict, grad_dict = {}, {}
@@ -623,7 +555,7 @@ class Trainer:
         x_batch = apply_augmentations(x_batch)
         t_batch = self.train_t[batch_mask]
         if t_batch.ndim == 1:
-            t_batch = smooth_labels(t_batch, smoothing=0.1, num_classes=100)
+            t_batch = smooth_labels(t_batch, smoothing=self.smoothing, num_classes=100)
 
         loss = self.model.loss(x_batch, t_batch)
         self.model.backward(self.loss_grad(x_batch, t_batch))
@@ -633,13 +565,12 @@ class Trainer:
 
         params, grads = self.get_param_dict_and_grad()
         self.optimizer.update(params, grads)
-        update_ema_model(self.ema_model, self.model)
 
         return loss
 
     def train(self):
         for epoch in range(self.epochs):
-            self.optimizer.lr = cosine_annealing_with_warmup(epoch, self.epochs, base_lr=0.01)
+            self.optimizer.lr = cosine_annealing_with_warmup(epoch, self.epochs, base_lr=self.optimizer.lr)
             print(f"[Epoch {epoch + 1}]", flush=True)
             epoch_loss = 0
             start_time = time.time()
@@ -654,7 +585,7 @@ class Trainer:
             self.train_loss_list.append(avg_loss)
 
             train_acc = self.model.accuracy(self.train_x[:1000], self.train_t[:1000])
-            val_acc = self.ema_model.accuracy(self.val_x, self.val_t)
+            val_acc = self.model.accuracy(self.val_x, self.val_t)
             val_loss = self.batched_loss(self.val_x, self.val_t, batch_size=128)
             self.train_acc_list.append(train_acc)
             self.test_acc_list.append(val_acc)
@@ -702,32 +633,6 @@ class Trainer:
                  val_loss=np.array(self.val_loss_list))
         print(f"Log saved to {filename}", flush=True)
 
-    def load_model(self, filename):
-        with open(filename, 'rb') as f:
-            state = pickle.load(f)
-
-        params, _ = self.get_param_dict_and_grad()
-        for k in params:
-            if k in state['model']:
-                params[k][...] = state['model'][k]
-            else:
-                print(f"[WARN] Key {k} not found in checkpoint!", flush=True)
-
-        opt = state['optimizer']
-        self.optimizer.lr = opt['lr']
-        self.optimizer.beta1 = opt['beta1']
-        self.optimizer.beta2 = opt['beta2']
-        self.optimizer.eps = opt['eps']
-        self.optimizer.m = opt['m']
-        self.optimizer.v = opt['v']
-        self.optimizer.t = opt['t']
-
-        # 복원된 로그
-        self.train_loss_list = state.get('train_loss_list', [])
-        self.train_acc_list = state.get('train_acc_list', [])
-        self.test_acc_list = state.get('test_acc_list', [])
-        self.val_loss_list = state.get('val_loss_list', [])
-
     def batched_loss(self, x, t, batch_size=128):
         total_loss = 0.0
         total_count = 0
@@ -738,9 +643,7 @@ class Trainer:
             total_loss += loss * len(x_batch)
             total_count += len(x_batch)
         return total_loss / total_count
-
-# === 자동 튜닝 실험 루프 추가 ===
-
+    
 import numpy as np
 
 (x_train, y_train_fine, y_train_coarse),
@@ -758,41 +661,13 @@ model_configs = [
     {"lr": 0.001, "batch_size": 32},
 ]
 
-# 튜닝 단계별 하이퍼파라미터 구성
-skip_probs = [0.1, 0.2, 0.3]
+# 튜닝할 smoothing 값
 smoothing_values = [0.05, 0.1, 0.15]
-ema_warmup_configs = [
-    {"ema_decay": 0.995, "warmup_epochs": 3},
-    {"ema_decay": 0.9999, "warmup_epochs": 7}
-]
 
-# 각 모델 설정마다 총 9회 실험 (4 + 3 + 2)
 def run_experiments():
     for model_id, cfg in enumerate(model_configs):
         print(f"=== [모델 설정 {model_id+1}] LR={cfg['lr']}, BS={cfg['batch_size']} ===")
-        # 1단계: skip_prob 튜닝
-        for skip in skip_probs:
-            model = ResNet20()
-            trainer = Trainer(
-                model=model,
-                model_name=f"ResNet20_cfg{model_id+1}_skip{skip}",
-                train_data=(x_train, y_train_fine),
-                val_data=(x_val, y_val_fine),
-                test_data=(x_test, y_test_fine),
-                epochs=10,
-                batch_size=cfg["batch_size"],
-                optimizer_name="adam",
-                lr=cfg["lr"]
-            )
-            trainer.skip_prob = skip
-            trainer.smoothing = 0.1
-            trainer.ema_decay = 0.999
-            trainer.warmup_epochs = 5
-            trainer.train()
-            trainer.save_log(f"log_cfg{model_id+1}_skip{skip}.npz")
-            trainer.save_model(f"model_cfg{model_id+1}_skip{skip}.pkl")
 
-        # Best skip_prob = 0.1 고정 (예시), smoothing 튜닝
         for smooth in smoothing_values:
             model = ResNet20()
             trainer = Trainer(
@@ -804,39 +679,12 @@ def run_experiments():
                 epochs=10,
                 batch_size=cfg["batch_size"],
                 optimizer_name="adam",  
-                lr=cfg["lr"]
+                lr=cfg["lr"],
+                smoothing=smooth
             )
-            trainer.skip_prob = 0.1
-            trainer.smoothing = smooth
-            trainer.ema_decay = 0.999
-            trainer.warmup_epochs = 5
             trainer.train()
             trainer.save_log(f"log_cfg{model_id+1}_smooth{smooth}.npz")
             trainer.save_model(f"model_cfg{model_id+1}_smooth{smooth}.pkl")
-            
-
-        # EMA/Warmup 튜닝
-        for ema_cfg in ema_warmup_configs:
-            model = ResNet20()
-            trainer = Trainer(
-                model=model,
-                model_name=f"ResNet20_cfg{model_id+1}_ema{ema_cfg['ema_decay']}_warmup{ema_cfg['warmup_epochs']}",
-                train_data=(x_train, y_train_fine),
-                val_data=(x_val, y_val_fine),
-                test_data=(x_test, y_test_fine),
-                epochs=10,
-                batch_size=cfg["batch_size"],
-                optimizer_name="adam",
-                lr=cfg["lr"]
-            )
-            trainer.skip_prob = 0.1
-            trainer.smoothing = 0.1
-            trainer.ema_decay = ema_cfg["ema_decay"]
-            trainer.warmup_epochs = ema_cfg["warmup_epochs"]
-            trainer.train()
-            trainer.save_log(f"log_cfg{model_id+1}_ema{ema_cfg['ema_decay']}_warmup{ema_cfg['warmup_epochs']}.npz")
-            trainer.save_model(f"model_cfg{model_id+1}_ema{ema_cfg['ema_decay']}_warmup{ema_cfg['warmup_epochs']}.pkl")
 
 if __name__ == "__main__":
     run_experiments()
-    
