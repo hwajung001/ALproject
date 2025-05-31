@@ -8,3 +8,4 @@ cifar-100-python/ filter=lfs diff=lfs merge=lfs -text
 cifar-100-python/meta filter=lfs diff=lfs merge=lfs -text
 cifar-100-python/test filter=lfs diff=lfs merge=lfs -text
 cifar-100-python/file.txt~ filter=lfs diff=lfs merge=lfs -text
+src/cifar-100-python/train filter=lfs diff=lfs merge=lfs -text
